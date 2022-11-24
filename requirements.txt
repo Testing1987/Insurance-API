@@ -1,0 +1,7 @@
+fastapi==0.79.0
+flake8==4.0.1
+isort==5.10.1
+ipython==8.4.0
+neo4j==5.1.0
+strawberry-graphql==0.124.0
+uvicorn[standard]==0.18.2
