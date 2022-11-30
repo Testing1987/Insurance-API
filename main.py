@@ -7,11 +7,17 @@ from fastapi import FastAPI, Request
 from neo4j import GraphDatabase
 from strawberry.asgi import GraphQL
 from dotenv import load_dotenv
+from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 
-AURADB_URI = getenv("AURADB_URI")
-AURADB_USERNAME = getenv("AURADB_USERNAME")
-AURADB_PASSWORD = getenv("AURADB_PASSWORD")
+# AURADB_URI = getenv("AURADB_URI")
+# AURADB_USERNAME = getenv("AURADB_USERNAME")
+# AURADB_PASSWORD = getenv("AURADB_PASSWORD")
+
+
+AURADB_URI = "neo4j://40.76.237.158:7687"
+AURADB_USERNAME = "neo4j"
+AURADB_PASSWORD = "d5CxI92hO28l"
 
 
 def _and(cur_filter, new_filter):
@@ -103,24 +109,51 @@ class Question:
 class Application:
     uuid: str
     name: str
-    version: str
+    # version: str
+    # createdAt: str
+    # updatedAt: str
+    # questions: List[Question]
+
+    @classmethod
+    def marshal(cls, application) -> "Application":
+
+        # questions = application.get('questions')
+        # questions = questions if questions else []
+        # print("Application_Questions", questions)
+
+        return cls(
+            uuid=application['uuid'],
+            name=application['name'],
+            # version=application['version'],
+            # createdAt=application['created_at'],
+            # updatedAt=application['updated_at'],
+            # questions=[
+            #     Question.marshal(
+            #         question.get('question'), question.get('answer')
+            #     )
+            #     for question in questions
+            # ]
+        )
+
+
+@strawberry.type
+class ApplicantForm:
+    uuid: str
+    name: str
     createdAt: str
     updatedAt: str
     questions: List[Question]
 
     @classmethod
-    def marshal(cls, application) -> "Application":
-
-        questions = application.get('questions')
+    def marshal(cls, applicant) -> "ApplicantForm":
+        questions = applicant.get('questions')
         questions = questions if questions else []
-        print("questions", questions)
-
+        print("Applicant_Questions", questions)
         return cls(
-            uuid=application['uuid'],
-            name=application['name'],
-            version=application['version'],
-            createdAt=application['created_at'],
-            updatedAt=application['updated_at'],
+            uuid=applicant['uuid'],
+            name=applicant['name'],
+            createdAt=applicant['created_at'],
+            updatedAt=applicant['updated_at'],
             questions=[
                 Question.marshal(
                     question.get('question'), question.get('answer')
@@ -146,27 +179,56 @@ class Query:
         ]
 
     @strawberry.field()
-    def getApplicationWithQuestion(
+    def applicantForms(self) -> List[ApplicantForm]:
+        with graph.session() as session:
+            query = """
+                MATCH (a:ApplicantForm)
+                MATCH (ans:Answer)<-[r:HAS_ANSWER]-(a)
+                MATCH (q:Question) where q.order="101"
+                MATCH (q)-[r1:HAS_ANSWER]-(ans)--(a)
+                SET a.name = ans.answer
+                RETURN a
+            """
+            rows = session.run(query).data()
+        return [
+            ApplicantForm.marshal(
+                row['a']
+            ) for row in rows
+        ]
+
+    @strawberry.field()
+    def getQuestions(self) -> List[Question]:
+        with graph.session() as session:
+            query = """
+                MATCH (a:Question) RETURN a
+            """
+            rows = session.run(query).data()
+        return [
+            Question.marshal(
+                row['a']
+            ) for row in rows
+        ]
+
+    @strawberry.field()
+    def getApplicantWithQuestion(
         self,
-        applicationUuid: str
-    ) -> Application:
+        applicantUuid: str
+    ) -> ApplicantForm:
 
         ans_query = f"""
             MATCH
-                (app:Application {{uuid: '{applicationUuid}'}})-->
-                (q:Question)-[qa:HAS_ANSWER
-                    {{has_application_uuid: '{applicationUuid}'}}
-                ]->(ans:Answer)
+                (app:ApplicantForm {{uuid: '{applicantUuid}'}})-->
+                (ans:Answer)<-[qa:HAS_ANSWER]-(q:Question)
             RETURN app, q, qa, ans
         """
 
         no_ans_query = f"""
             MATCH
-                (app:Application {{uuid: '{applicationUuid}'}})-->
+                (app:ApplicantForm {{uuid: '{applicantUuid}'}})-->
                 (q:Question)
             WHERE NOT
                 (q)-[:HAS_ANSWER
-                    {{has_application_uuid: '{applicationUuid}'}}
+                    {{has_ApplicantForm_uuid: '{applicantUuid}'}}
                 ]->()
             RETURN app, q
         """
@@ -196,7 +258,7 @@ class Query:
             )
         for row in no_ans_rows:
             app['questions'].append({"question": dict(row['q'])})
-        return Application.marshal(app)
+        return ApplicantForm.marshal(app)
 
 
 @strawberry.type
@@ -211,11 +273,15 @@ class Mutation:
         with graph.session() as session:
             query = f"""
                 UNWIND $answers as answer
-                MATCH (q:Question {{uuid: answer.questionUuid}})
+                MATCH (q:Question),(f:ApplicantForm) 
+                WHERE q.uuid= answer.questionUuid
+                AND f.uuid = '{applicationUuid}'
                 MERGE
                     (q)-[r:HAS_ANSWER {{
                         has_application_uuid: '{applicationUuid}'
                     }}]->(a:Answer)
+                MERGE
+                    (f)-[m:HAS_ANSWER]->(a)
                 ON CREATE SET
                     a.uuid = apoc.create.uuid(),
                     a.type = answer.type,
@@ -236,6 +302,30 @@ class Mutation:
             session.run(query, answers=data.serialize())
         return None
 
+    @strawberry.mutation()
+    def submitApplicantForm(
+        self, uuid: str, name: str
+    ) -> Optional[ApplicantForm]:
+
+        with graph.session() as session:
+            query = f"""
+                    CREATE (a:ApplicantForm) SET
+                    a.uuid = '{uuid}',
+                    a.created_at = datetime({{epochmillis:timestamp()}}),
+                    a.updated_at = datetime({{epochmillis:timestamp()}}),
+                    a.name = '{name}'
+
+                    return a
+                """
+            row = session.run(query).single()
+        return ApplicantForm.marshal(row['a'])
+
+    @strawberry.mutation
+    def sendMessage(
+                self, data: str
+            ) -> str:
+        return "Hello World"
+
 
 schema = strawberry.Schema(query=Query, mutation=Mutation)
 graphql_app = GraphQL(schema)
@@ -243,14 +333,25 @@ graph = GraphDatabase.driver(
     AURADB_URI, auth=(AURADB_USERNAME, AURADB_PASSWORD)
 )
 
-app = FastAPI()
+
+def create_app() -> FastAPI:
+    app = FastAPI()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_headers=["*"],
+        allow_origins=["http://localhost:3000"],
+        allow_methods=["*"]
+    )
+
+    @app.middleware("http")
+    def my_middleware(request: Request, call_next):
+        response = call_next(request)
+        return response
+
+    app.add_route("/graphql", graphql_app)
+    return app
 
 
-@app.middleware("http")
-def my_middleware(request: Request, call_next):
-    response = call_next(request)
-    return response
+app = create_app()
 
-
-app.add_route("/graphql", graphql_app)
 graph.close()
