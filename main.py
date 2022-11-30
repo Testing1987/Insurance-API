@@ -1,5 +1,5 @@
 from enum import Enum
-from os import getenv
+# from os import getenv
 from typing import List, Optional
 
 import strawberry
@@ -15,7 +15,7 @@ load_dotenv()
 # AURADB_PASSWORD = getenv("AURADB_PASSWORD")
 
 
-AURADB_URI = "neo4j://40.76.237.158:7687"
+AURADB_URI = "bolt://40.76.237.158:7687"
 AURADB_USERNAME = "neo4j"
 AURADB_PASSWORD = "d5CxI92hO28l"
 
